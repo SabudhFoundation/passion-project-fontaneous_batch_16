@@ -1,0 +1,9 @@
+fastapi==0.135.1
+uvicorn==0.34.0
+pydantic==2.7.0
+opencv-python==4.13.0.92
+Pillow==12.1.1
+pytesseract==0.3.13
+scikit-image==0.25.2
+torch==2.10.0
+transformers==5.3.0
