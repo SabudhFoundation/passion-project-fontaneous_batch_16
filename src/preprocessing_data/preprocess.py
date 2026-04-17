@@ -15,152 +15,178 @@ import cv2
 import numpy as np
 
 
-
 def preprocess_image(img):
     """
-    Convert raw grayscale glyph image into a clean binary representation.
+    Preprocess a grayscale glyph image into a clean binary format.
 
     Steps:
-        1. Noise reduction using Gaussian blur
-        2. Binarization using Otsu thresholding
-        3. Standardize foreground polarity (black glyphs on white background)
-        4. Morphological closing to repair broken strokes
+        1. Apply Gaussian blur to reduce noise
+        2. Perform Otsu thresholding for binarization
+        3. Ensure consistent polarity (black glyph on white background)
+        4. Apply morphological closing to fix broken strokes
 
     Args:
         img (np.ndarray): Input grayscale image
 
     Returns:
-        np.ndarray: Clean binary image
+        np.ndarray: Processed binary image
 
     Raises:
         ValueError: If input image is None
+        RuntimeError: If any processing step fails
     """
+    try:
+        # Validate input
+        if img is None:
+            raise ValueError("input_image is None")
 
-    if img is None:
-        raise ValueError("input_image is None")
+        # Step 1: Noise reduction using Gaussian Blur
+        img = cv2.GaussianBlur(img, (3, 3), 0)
 
+        # Step 2: Binarization using Otsu Thresholding
+        _, img = cv2.threshold(
+            img, 0, 255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
 
+        # Step 3: Ensure glyph is black (foreground)
+        if np.mean(img) < 127:
+            img = cv2.bitwise_not(img)
 
-    # Blur
-    img = cv2.GaussianBlur(img, (3, 3), 0)
+        # Step 4: Morphological closing to repair strokes
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel, 1)
 
-    # Otsu Threshold
-    _, img = cv2.threshold(img, 0, 255,
-                           cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return img
 
-    # Ensure BLACK glyph
-    if np.mean(img) < 127:
-        img = cv2.bitwise_not(img)
-
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-
-    # Stroke thickening if needed
-    # img_inv = 255 - img
-    # img_inv = cv2.dilate(img_inv, kernel, iterations=1)
-    # img = 255 - img_inv
-
-    # Closing
-    img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel, 1)
-
-    return img
-
-
+    except Exception as e:
+        raise RuntimeError(f"Error in preprocess_image: {e}")
 
 
 def process_glyph_image(input_image, filename="glyph.png"):
     """
-    Normalize a preprocessed glyph into a fixed canvas.
+    Normalize a glyph image into a fixed-size standardized canvas.
 
     This function:
-        - Extracts bounding box
-        - Rescales glyph based on type (capital/small/descender)
-        - Places glyph on standardized canvas
+        - Extracts the bounding box of the glyph
+        - Classifies glyph type based on filename
+        - Rescales glyph according to type (capital/small/descender)
+        - Places glyph on a fixed canvas (120x140)
 
     Args:
         input_image (np.ndarray): Raw grayscale glyph image
-        filename (str): Used for glyph classification
+        filename (str): Filename used for heuristic classification
 
     Returns:
-        np.ndarray or None: Normalized glyph image (120x140)
+        np.ndarray or None:
+            Normalized glyph image (120x140) or None if no glyph found
+
+    Raises:
+        ValueError: If input image is None
+        RuntimeError: If processing fails
     """
+    try:
+        # Validate input
+        if input_image is None:
+            raise ValueError("input_image is None")
 
-    if input_image is None:
-        raise ValueError("input_image is None")
+        # Predefined vertical alignment zones
+        RED, BLUE, GREEN, YELLOW = 15, 45, 75, 105
 
-    RED, BLUE, GREEN, YELLOW = 15, 45, 75, 105
+        def get_bbox(img):
+            """
+            Compute bounding box of foreground pixels.
 
-    def get_bbox(img):
-        """
-        Compute bounding box of foreground pixels.
+            Args:
+                img (np.ndarray): Binary image
 
-        Args:
-            img (np.ndarray): Binary image
+            Returns:
+                tuple or None: (y0, y1, x0, x1) or None if empty
+            """
+            coords = np.column_stack(np.where(img < 250))
+            if coords.size == 0:
+                return None
 
-        Returns:
-            tuple or None: (y0, y1, x0, x1)
-        """
-        coords = np.column_stack(np.where(img < 250))
-        if coords.size == 0:
-            return None
-        y0, x0 = coords.min(axis=0)
-        y1, x1 = coords.max(axis=0)
-        return y0, y1, x0, x1
+            y0, x0 = coords.min(axis=0)
+            y1, x1 = coords.max(axis=0)
+            return y0, y1, x0, x1
 
-    def classify(name):
-        """
-        Heuristic classification based on filename.
+        def classify(name):
+            """
+            Classify glyph type based on filename.
 
-        Categories:
-            1 → capital letters / digits
-            2 → normal lowercase glyphs
-            3 → descenders (g, p, q, y, j)
+            Categories:
+                1 → Capital letters / digits
+                2 → Normal lowercase letters
+                3 → Descenders (g, p, q, y, j)
 
-        Args:
-            name (str): filename
+            Args:
+                name (str): Filename
 
-        Returns:
-            int: class label (1, 2, or 3)
-        """
-        name = name.lower()
-        if name.startswith("capital") or name[0].isdigit():
-            return 1
-        if any(k in name for k in ["small_g", "small_p", "small_q", "small_y", "small_j"]):
-            return 3
-        return 2
+            Returns:
+                int: Class label (1, 2, or 3)
+            """
+            name = name.lower()
 
-    binary = preprocess_image(input_image)
+            if name.startswith("capital") or name[0].isdigit():
+                return 1
 
-    bbox = get_bbox(binary)
-    if bbox is None:
-        return None
+            if any(k in name for k in
+                   ["small_g", "small_p", "small_q", "small_y", "small_j"]):
+                return 3
 
-    y0, y1, x0, x1 = bbox
-    glyph = binary[y0:y1+1, x0:x1+1]
+            return 2
 
-    h, w = glyph.shape
-    gtype = classify(filename)
+        # Step 1: Preprocess image
+        binary = preprocess_image(input_image)
 
-    if gtype == 1:
-        top, bottom = RED, GREEN
-    elif gtype == 2:
-        top, bottom = BLUE, GREEN
-    else:
-        top, bottom = BLUE, YELLOW
+        # Step 2: Extract bounding box
+        bbox = get_bbox(binary)
+        if bbox is None:
+            return None  # No glyph detected
 
-    target_h = bottom - top
+        y0, y1, x0, x1 = bbox
+        glyph = binary[y0:y1 + 1, x0:x1 + 1]
 
-    scale = target_h / h
-    new_w = max(1, int(w * scale))
-    new_h = max(1, int(h * scale))
+        # Step 3: Get glyph dimensions and type
+        h, w = glyph.shape
+        gtype = classify(filename)
 
-    glyph = cv2.resize(glyph, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        # Step 4: Define vertical placement based on glyph type
+        if gtype == 1:
+            top, bottom = RED, GREEN
+        elif gtype == 2:
+            top, bottom = BLUE, GREEN
+        else:
+            top, bottom = BLUE, YELLOW
 
-    canvas = np.ones((120, 140), dtype=np.uint8) * 255
+        # Step 5: Compute scaling factor
+        target_h = bottom - top
+        scale = target_h / h
 
-    x_offset = (140 - new_w) // 2
-    y_offset = top
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
 
-    canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = glyph
+        # Step 6: Resize glyph
+        glyph = cv2.resize(
+            glyph,
+            (new_w, new_h),
+            interpolation=cv2.INTER_NEAREST
+        )
 
-    return canvas
+        # Step 7: Create blank canvas
+        canvas = np.ones((120, 140), dtype=np.uint8) * 255
+
+        # Step 8: Center horizontally and place vertically
+        x_offset = (140 - new_w) // 2
+        y_offset = top
+
+        canvas[y_offset:y_offset + new_h,
+               x_offset:x_offset + new_w] = glyph
+
+        return canvas
+
+    except Exception as e:
+        raise RuntimeError(
+            f"Error in process_glyph_image ({filename}): {e}"
+        )
