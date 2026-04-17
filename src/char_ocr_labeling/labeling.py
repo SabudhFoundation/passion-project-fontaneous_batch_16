@@ -1,6 +1,7 @@
-from .ocr_engine import OCREngine
-from .normalization import normalize_char_image
-from .scoring import compute_char_score
+from ocr_engine import OCREngine
+from normalization import normalize_char_image
+from scoring import compute_char_score
+from utils import get_label_folder
 
 class Labeler:
 
@@ -20,36 +21,18 @@ class Labeler:
 
             label, conf = result
 
-            norm = normalize_char_image(img)
+            normalized = normalize_char_image(img, label)
 
-            if norm is None:
+            if normalized is None:
                 continue
 
-            score = compute_char_score(norm, conf)
+            score = compute_char_score(normalized, conf)
 
             labeled.append({
-                "img": norm,
-                "label": label,
+                "img": normalized,
+                "label": get_label_folder(label),
                 "conf": conf,
                 "score": score
             })
 
         return labeled
-
-    def group_by_label(self, labeled_data):
-
-        groups = {}
-
-        for item in labeled_data:
-            label = item["label"]
-
-            if label not in groups:
-                groups[label] = []
-
-            groups[label].append(item)
-
-        # sort by score
-        for label in groups:
-            groups[label].sort(key=lambda x: x["score"], reverse=True)
-
-        return groups

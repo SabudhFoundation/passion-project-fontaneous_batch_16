@@ -2,7 +2,7 @@ OCR_CONF = 0.85
 IMG_SIZE = 64
 
 # normalization
-FILL_RATIO_TARGET = 0.92
+FILL_RATIO = 0.92
 
 # scoring weights
 W_OCR = 0.4
