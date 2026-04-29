@@ -222,3 +222,4 @@ Temporary Items/
 # .*/ 
 # !/.gitignore
 
+virtual_font/
