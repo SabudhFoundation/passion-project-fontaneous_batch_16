@@ -34,10 +34,13 @@ def vectorize_image(input_path, output_path):
             input_path,
             output_path,
             colormode='binary',
-            filter_speckle=10,
-            corner_threshold=20,
-            length_threshold=10.0
-        )
+            mode='spline',
+            filter_speckle=6,
+            corner_threshold=90,
+            length_threshold=4.0,
+            max_iterations=10,
+            splice_threshold=40
+            )
     except Exception as e:
         print(f" VTracer error for {input_path}: {e}")
 
