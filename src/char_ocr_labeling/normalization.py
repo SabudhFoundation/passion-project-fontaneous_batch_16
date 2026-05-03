@@ -1,6 +1,30 @@
+"""
+Character normalization module.
+
+Responsibilities:
+- Convert raw character crops into standardized 64x64 glyph images
+- Remove noise and retain only the primary connected component
+- Normalize stroke thickness adaptively
+- Align characters using baseline detection
+- Center and scale glyphs with consistent fill ratio
+
+Key steps:
+1. Grayscale + Otsu binarization
+2. Foreground isolation (largest component)
+3. Stroke refinement (adaptive dilation)
+4. Baseline detection for vertical alignment
+5. Resize with controlled fill ratio
+6. Placement on fixed-size canvas
+
+Returns:
+- Clean, aligned 64x64 binary character image
+- None if glyph extraction fails
+"""
+
 import cv2
 import numpy as np
 from .config import IMG_SIZE, FILL_RATIO
+
 
 def normalize_char_image(img, label=None, size=IMG_SIZE):
 

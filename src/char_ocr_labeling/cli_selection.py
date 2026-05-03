@@ -1,6 +1,49 @@
+"""
+CLI-based candidate selection module.
+
+Provides a headless workflow for human-in-the-loop filtering of OCR results.
+
+Responsibilities:
+- Group labeled characters by class
+- Sort candidates by quality score
+- Generate visual grids for inspection
+- Allow manual selection of best samples per label
+
+Components:
+
+create_grid:
+    - Builds a tiled grayscale image of candidates
+    - Overlays index numbers for selection reference
+
+interactive_best_selection_cli:
+    - Saves grid images per label to disk
+    - Prompts user to choose best candidate via CLI
+    - Stores selected samples in data[sub]["best"]
+
+Input:
+- data structure:
+    {
+        sub: {
+            "labeled": [ {img, label, score, ...}, ... ]
+        }
+    }
+
+Output:
+- Updated data with:
+    data[sub]["best"] = selected samples
+
+Filesystem:
+- Temporary grids stored in: tmp_grids/
+
+Notes:
+- Designed for non-GUI environments (e.g., SSH, servers)
+- Human selection significantly improves dataset quality
+"""
+
 import os
 import cv2
 import numpy as np
+
 
 TMP_GRID_DIR = "tmp_grids"
 
