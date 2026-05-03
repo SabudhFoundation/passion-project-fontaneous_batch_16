@@ -1,65 +1,57 @@
-import os
-import cv2
+"""
+OCR pipeline orchestrator.
 
-from labeling import Labeler
-from cli_selection import interactive_best_selection_cli
-from saver import save_final_outputs
+Responsibilities:
+- Execute end-to-end character labeling on segmented crops
+- Aggregate labeled outputs into structured groups for downstream use
 
-ROOT = "char_crops"
+Pipeline:
+1. Initialize Labeler (OCR + normalization + scoring)
+2. Label each character crop
+3. Group labeled samples by class label
+4. Sort each group by descending quality score
 
+Input:
+- char_crops: List[np.ndarray]
+    Raw segmented character images
 
-def load_grouped_segments(root):
+Output:
+- dict:
+    {
+        "labeled": List[dict],   # flat labeled results
+        "groups": {
+            label: List[dict]    # grouped + sorted by score
+        }
+    }
 
-    data = {}
+Notes:
+- Grouping enables UI-based selection of best samples
+- Sorting ensures highest-quality candidates appear first
+- Designed to integrate with Streamlit frontend and dataset saver
+"""
 
-    for sub in os.listdir(root):
+from .labeling import Labeler
 
-        sub_path = os.path.join(root, sub)
-
-        if not os.path.isdir(sub_path):
-            continue
-
-        data[sub] = {"segments": []}
-
-        for file in os.listdir(sub_path):
-
-            if not file.lower().endswith((".png", ".jpg", ".jpeg")):
-                continue
-
-            path = os.path.join(sub_path, file)
-
-            img = cv2.imread(path)
-
-            if img is None:
-                continue
-
-            data[sub]["segments"].append(img)
-
-    return data
-
-
-def main():
-
-    data = load_grouped_segments(ROOT)
+def run_ocr_pipeline(char_crops):
+    """
+    Accepts list of character images (np.ndarray)
+    Returns labeled data grouped for UI selection
+    """
 
     labeler = Labeler()
 
-    for sub in data:
+    labeled = labeler.label_segments(char_crops)
 
-        print(f"\nProcessing {sub}")
+    # group by label
+    groups = {}
+    for item in labeled:
+        groups.setdefault(item["label"], []).append(item)
 
-        labeled = labeler.label_segments(data[sub]["segments"])
+    # sort by score
+    for label in groups:
+        groups[label].sort(key=lambda x: x["score"], reverse=True)
 
-        print(f"Labeled: {len(labeled)}")
-
-        data[sub]["labeled"] = labeled
-
-    data = interactive_best_selection_cli(data)
-
-    save_final_outputs(data)
-
-    print("\nDone")
-
-
-if __name__ == "__main__":
-    main()
+    return {
+        "labeled": labeled,
+        "groups": groups
+    }

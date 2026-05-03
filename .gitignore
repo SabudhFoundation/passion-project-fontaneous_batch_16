@@ -76,9 +76,9 @@ Desktop.ini
 
 # Quarto render outputs (HTML, PDF, EPUB, etc.)
 src/char_ocr_labeling/char_crops/
-src/char_ocr_labeling/final_dataset/
-src/char_ocr_labeling/best_chars/
-src/char_ocr_labeling/best_chars_inverted/
+*final_dataset/
+*best_chars/
+*best_chars_inverted/
 src/char_ocr_labeling/tmp_grids/
 
 

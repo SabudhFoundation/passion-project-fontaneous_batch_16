@@ -4,6 +4,7 @@ import numpy as np
 # ========= CONFIG =========
 MIN_NOISE_AREA = 35
 
+
 # =========================================
 # IMAGE UTILITIES
 # =========================================
@@ -59,8 +60,6 @@ def inpaint_lines_safe(gray):
     vert_lines = np.zeros_like(vert_candidates)
 
     for i in range(1, num_labels):
-        x = stats[i, cv2.CC_STAT_LEFT]
-        y = stats[i, cv2.CC_STAT_TOP]
         w = stats[i, cv2.CC_STAT_WIDTH]
         h = stats[i, cv2.CC_STAT_HEIGHT]
         area = stats[i, cv2.CC_STAT_AREA]
@@ -88,24 +87,32 @@ def inpaint_lines_safe(gray):
 # =========================================
 # MAIN PREPROCESS FUNCTION
 # =========================================
-def preprocess_single(img):
+def preprocess_single(img, return_bgr=True):
     """
     Full preprocessing pipeline:
     - grayscale
     - line removal
     - binarization
     - noise removal
+
+    Args:
+        return_bgr (bool): if True → returns 3-channel image (for segmentation)
+                           if False → returns binary (for debugging)
     """
 
+    if img is None:
+        raise ValueError("Input image is None")
+
+    # Step 1: Grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Remove lines
+    # Step 2: Remove lines
     clean = inpaint_lines_safe(gray)
 
-    # Blur
+    # Step 3: Blur
     blurred = cv2.GaussianBlur(clean, (3, 3), 0)
 
-    # Adaptive threshold
+    # Step 4: Adaptive threshold (INVERTED)
     binary = cv2.adaptiveThreshold(
         blurred, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
@@ -113,11 +120,23 @@ def preprocess_single(img):
         31, 15
     )
 
-    # Morphological closing
+    # Step 5: Morphological closing
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
     final = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
-    # Remove small noise
+    # Step 6: Remove small noise
     final = remove_noise_floor(final)
+
+    # =========================================
+    # CRITICAL FIX FOR YOUR PIPELINE
+    # =========================================
+    # segmentation.py expects a "natural image"
+    # If you pass pure binary → it reprocesses badly
+    #
+    # So convert back to 3-channel BGR
+    # =========================================
+    if return_bgr:
+        final_bgr = cv2.cvtColor(final, cv2.COLOR_GRAY2BGR)
+        return final_bgr
 
     return final
