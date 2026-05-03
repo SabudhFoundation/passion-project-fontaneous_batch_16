@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from config import IMG_SIZE, FILL_RATIO
+from .config import IMG_SIZE, FILL_RATIO
 
 def normalize_char_image(img, label=None, size=IMG_SIZE):
 

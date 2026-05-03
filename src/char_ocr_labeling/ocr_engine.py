@@ -1,5 +1,6 @@
+import cv2
 import easyocr
-from config import OCR_CONF
+from .config import OCR_CONF
 
 class OCREngine:
     def __init__(self):
@@ -7,7 +8,23 @@ class OCREngine:
 
     def get_single_char(self, img):
 
-        results = self.reader.readtext(img)
+        # -----------------------------
+        # PREPROCESS FOR OCR
+        # -----------------------------
+        if len(img.shape) == 2:
+            proc = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+        else:
+            proc = img.copy()
+
+        # 🔥 upscale (critical)
+        proc = cv2.resize(proc, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+
+        # 🔥 slight blur helps OCR stability
+        proc = cv2.GaussianBlur(proc, (3, 3), 0)
+
+        results = self.reader.readtext(proc)
+
+        print("OCR RAW:", results)
 
         best = None
 

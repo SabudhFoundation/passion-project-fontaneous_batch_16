@@ -1,7 +1,7 @@
-from ocr_engine import OCREngine
-from normalization import normalize_char_image
-from scoring import compute_char_score
-from utils import get_label_folder
+from .ocr_engine import OCREngine
+from .normalization import normalize_char_image
+from .scoring import compute_char_score
+from .utils import get_label_folder
 
 class Labeler:
 
