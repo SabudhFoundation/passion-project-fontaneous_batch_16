@@ -33,7 +33,7 @@ Output:
     data[sub]["best"] = selected samples
 
 Filesystem:
-- Temporary grids stored in: tmp_grids/
+- Temporary grids stored in: src/data/tmp_grids/
 
 Notes:
 - Designed for non-GUI environments (e.g., SSH, servers)
@@ -43,9 +43,11 @@ Notes:
 import os
 import cv2
 import numpy as np
+from pathlib import Path
 
-
-TMP_GRID_DIR = "tmp_grids"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = PROJECT_ROOT / "data"
+TMP_GRID_DIR = DATA_ROOT / "tmp_grids"
 
 def create_grid(candidates, cols=6, cell_size=64):
 
@@ -74,14 +76,14 @@ def create_grid(candidates, cols=6, cell_size=64):
             1
         )
 
-    return grid  # keep grayscale (no need for BGR)
+    return grid
 
 
 def interactive_best_selection_cli(data):
 
     print("\nHeadless grid selection started")
 
-    os.makedirs(TMP_GRID_DIR, exist_ok=True)
+    TMP_GRID_DIR.mkdir(parents=True, exist_ok=True)
 
     for sub in data:
 
@@ -89,11 +91,7 @@ def interactive_best_selection_cli(data):
 
         labeled = data[sub]["labeled"]
 
-        # ===============================
-        # GROUP + SORT
-        # ===============================
         groups = {}
-
         for item in labeled:
             groups.setdefault(item["label"], []).append(item)
 
@@ -102,13 +100,9 @@ def interactive_best_selection_cli(data):
 
         selected = []
 
-        # ===============================
-        # PER LABEL SELECTION
-        # ===============================
         for label in sorted(groups.keys()):
 
             candidates = groups[label]
-
             if not candidates:
                 continue
 
@@ -116,9 +110,8 @@ def interactive_best_selection_cli(data):
 
             grid = create_grid(candidates)
 
-            # SAVE GRID INSTEAD OF SHOW
-            grid_path = os.path.join(TMP_GRID_DIR, f"{sub}_{label}.png")
-            cv2.imwrite(grid_path, grid)
+            grid_path = TMP_GRID_DIR / f"{sub}_{label}.png"
+            cv2.imwrite(str(grid_path), grid)
 
             print(f"Open this image: {grid_path}")
 
@@ -134,7 +127,7 @@ def interactive_best_selection_cli(data):
                 if choice.isdigit():
                     idx = int(choice)
                     if 1 <= idx <= total:
-                        selected.append(candidates[idx-1])
+                        selected.append(candidates[idx - 1])
                         print(f"Selected: {idx}/{total}")
                         break
 
@@ -143,5 +136,4 @@ def interactive_best_selection_cli(data):
         data[sub]["best"] = selected
 
     print("\nSelection complete")
-
     return data

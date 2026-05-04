@@ -83,6 +83,8 @@ src/char_ocr_labeling/tmp_grids/
 
 
 output/
+src/data/
+src/data/
 _output/
 book/
 _book/
