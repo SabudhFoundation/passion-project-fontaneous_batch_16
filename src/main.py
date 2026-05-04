@@ -1,8 +1,8 @@
 """Streamlit app for the OCR to TTF workflow."""
 
 import os
-import sys
 import shutil
+import subprocess
 
 import streamlit as st
 import cv2
@@ -14,8 +14,6 @@ from char_ocr_labeling.main import run_ocr_pipeline
 
 
 SRC_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(SRC_DIR)
-
 DATA_DIR = os.path.join(SRC_DIR, "data")
 RAW_DIR = os.path.join(DATA_DIR, "raw")
 INTERIM_DIR = os.path.join(DATA_DIR, "interim")
@@ -24,8 +22,8 @@ SELECTED_DIR = os.path.join(PROCESSED_DIR, "selected_chars")
 SVG_ROOT = os.path.join(PROCESSED_DIR, "svg")
 TTF_DIR = os.path.join(PROCESSED_DIR, "ttf")
 
-if PROJECT_DIR not in sys.path:
-    sys.path.append(PROJECT_DIR)
+FFPYTHON = r"C:\Program Files\FontForgeBuilds\bin\ffpython.exe"
+HELPER_SCRIPT = os.path.join(SRC_DIR, "ttf_generation", "step2_svg_to_ttf.py")
 
 try:
     from vectorization.preprocessing import process_glyph_image
@@ -36,12 +34,11 @@ except Exception as e:
     process_vectorization = None
     vectorization_error = str(e)
 
-try:
-    from ttf_generation.ttf_final import build_font
-    font_build_error = None
-except Exception as e:
-    build_font = None
-    font_build_error = str(e)
+font_build_error = None
+if not os.path.isfile(FFPYTHON):
+    font_build_error = f"FontForge Python not found: {FFPYTHON}"
+elif not os.path.isfile(HELPER_SCRIPT):
+    font_build_error = f"TTF helper not found: {HELPER_SCRIPT}"
 
 st.set_page_config(page_title="OCR Pipeline", layout="wide")
 
@@ -158,6 +155,25 @@ def is_supported_label(label):
     return label.startswith("capital_") or label.startswith("small_") or label.isdigit()
 
 
+def get_label_options(current_label=None):
+    """Return the labels available for selection."""
+    labels = []
+
+    for char in "abcdefghijklmnopqrstuvwxyz":
+        labels.append(f"small_{char}")
+
+    for char in "abcdefghijklmnopqrstuvwxyz":
+        labels.append(f"capital_{char}")
+
+    for digit in "0123456789":
+        labels.append(digit)
+
+    if current_label and current_label not in labels:
+        labels = [current_label] + labels
+
+    return labels
+
+
 def show_sample_crops(char_crops):
     """Show a small preview of detected crops."""
     cols = st.columns(6)
@@ -165,6 +181,41 @@ def show_sample_crops(char_crops):
     for i, crop in enumerate(char_crops[:18]):
         with cols[i % 6]:
             st.image(crop, width=90)
+
+
+def save_selected_item(source_label, target_label, item):
+    """Save a selected glyph under the chosen label."""
+    selected_item = dict(item)
+    selected_item["source_label"] = source_label
+    st.session_state.selected[target_label] = selected_item
+
+
+def show_selected_items():
+    """Show the current glyph selections."""
+    if not st.session_state.selected:
+        return
+
+    st.subheader("Current Selections")
+
+    for target_label in sorted(st.session_state.selected.keys()):
+        item = st.session_state.selected[target_label]
+        source_label = item.get("source_label", target_label)
+        cols = st.columns([1, 2, 2, 1])
+
+        with cols[0]:
+            st.image(item["img"], clamp=True, width=70)
+
+        with cols[1]:
+            st.write(target_label)
+
+        with cols[2]:
+            st.caption(f"from {source_label}")
+            st.caption(f"score: {item['score']:.2f}")
+
+        with cols[3]:
+            if st.button("Clear", key=f"selected_{target_label}"):
+                del st.session_state.selected[target_label]
+                st.rerun()
 
 
 def run_pipeline(uploaded):
@@ -245,6 +296,45 @@ def save_selected_svgs(selected, font_name):
     return saved_count, skipped_count
 
 
+def run_ttf_generation(font_name, ttf_path):
+    """Run the FontForge helper through ffpython."""
+    if not os.path.isfile(FFPYTHON):
+        raise RuntimeError(f"FontForge Python not found: {FFPYTHON}")
+
+    if not os.path.isfile(HELPER_SCRIPT):
+        raise RuntimeError(f"TTF helper not found: {HELPER_SCRIPT}")
+
+    env = os.environ.copy()
+    env["FF_SVG_FOLDER"] = SVG_ROOT
+    env["FF_FOLDERS"] = font_name
+    env["FF_OUTPUT_TTF"] = ttf_path
+    env["FF_FONT_NAME"] = font_name
+    env["FF_DELETE_SVGS"] = "0"
+
+    result = subprocess.run(
+        [FFPYTHON, HELPER_SCRIPT],
+        cwd=SRC_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        output_parts = []
+
+        if result.stdout.strip():
+            output_parts.append(result.stdout.strip())
+
+        if result.stderr.strip():
+            output_parts.append(result.stderr.strip())
+
+        details = "\n\n".join(output_parts)
+        if not details:
+            details = "FontForge helper exited with an error."
+
+        raise RuntimeError(details)
+
+
 def generate_ttf_file(selected, file_name):
     """Generate the final TTF file."""
     if vectorization_error is not None:
@@ -264,7 +354,7 @@ def generate_ttf_file(selected, file_name):
     if os.path.exists(ttf_path):
         os.remove(ttf_path)
 
-    build_font(SVG_ROOT, [font_name], ttf_path, font_name)
+    run_ttf_generation(font_name, ttf_path)
     clear_temp_folders()
 
     return ttf_path, saved_count, skipped_count
@@ -335,9 +425,22 @@ def show_selection_page():
 
     st.info(f"Labels found: {len(groups)}")
     st.info(f"Selected labels: {len(st.session_state.selected)}")
+    st.caption(
+        "Use Assign label when a glyph belongs to a different character. "
+        "Selecting another image for the same target label replaces the older one."
+    )
+
+    show_selected_items()
 
     for label in sorted(groups.keys()):
         st.subheader(label)
+        label_options = get_label_options(label)
+        target_label = st.selectbox(
+            "Assign label",
+            label_options,
+            index=label_options.index(label),
+            key=f"assign_{label}",
+        )
 
         candidates = groups[label]
         cols = st.columns(6)
@@ -348,14 +451,7 @@ def show_selection_page():
                 st.caption(f"score: {item['score']:.2f}")
 
                 if st.button("Select", key=f"{label}_{i}"):
-                    st.session_state.selected[label] = item
-
-        if label in st.session_state.selected:
-            st.success(f"Selected for {label}")
-
-            if st.button("Clear selection", key=f"clear_{label}"):
-                del st.session_state.selected[label]
-                st.rerun()
+                    save_selected_item(label, target_label, item)
 
 
 def show_download_page():
@@ -420,4 +516,3 @@ elif page == "Select OCR Images":
     show_selection_page()
 elif page == "Download TTF":
     show_download_page()
-
