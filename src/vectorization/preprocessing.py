@@ -51,9 +51,9 @@ def preprocess_image(img):
 
         # Step 3: Ensure glyph is black (foreground)
         if np.mean(img) < 127:
-            img = cv2.bitwise_not(img)
+            img = cv2.bitwise_not(img) ## inverting colors if background is darker
 
-        # Step 4: Morphological closing to repair strokes
+        # Step 4: Morphological closing to repair strokes(fill gaps)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel, 1)
 
@@ -111,75 +111,94 @@ def process_glyph_image(input_image, filename="glyph.png"):
             y1, x1 = coords.max(axis=0)
             return y0, y1, x0, x1
 
+        # Classification
         def classify(name):
             """
-            Classify glyph type based on filename.
+            Classify the glyph type based on its filename.
+
+            The classification determines how the glyph will be vertically
+            aligned and scaled within typographic zones.
 
             Categories:
-                1 → Capital letters / digits
+                1 → Capital letters or digits
                 2 → Normal lowercase letters
-                3 → Descenders (g, p, q, y, j)
+                3 → Ascender letters (e.g., b, d, h, l)
+                4 → Descender letters (e.g., g, p, q, y, j)
 
-            Args:
-                name (str): Filename
+            Parameters:
+                name (str): Filename or label of the glyph.
 
             Returns:
-                int: Class label (1, 2, or 3)
+                int: Glyph type category (1 to 4).
             """
             name = name.lower()
 
+            # Capital
             if name.startswith("capital") or name[0].isdigit():
                 return 1
 
+            # Descenders
             if any(k in name for k in
                    ["small_g", "small_p", "small_q", "small_y", "small_j"]):
+                return 4
+
+            # Ascenders
+            if any(k in name for k in
+                   ["small_b", "small_d", "small_f", "small_h", "small_k", "small_l"]):
                 return 3
 
+            # Normal lowercase
             return 2
-
-        # Step 1: Preprocess image
+        
+        # Step 1: Preprocess
         binary = preprocess_image(input_image)
 
-        # Step 2: Extract bounding box
+        # Step 1: Bounding box
         bbox = get_bbox(binary)
         if bbox is None:
-            return None  # No glyph detected
+            return None
 
         y0, y1, x0, x1 = bbox
         glyph = binary[y0:y1 + 1, x0:x1 + 1]
 
-        # Step 3: Get glyph dimensions and type
+        # Step 2
         h, w = glyph.shape
         gtype = classify(filename)
 
-        # Step 4: Define vertical placement based on glyph type
-        if gtype == 1:
+        # Zones
+        if gtype == 1:  # capital
             top, bottom = RED, GREEN
-        elif gtype == 2:
+        elif gtype == 2:  # normal
             top, bottom = BLUE, GREEN
-        else:
+        elif gtype == 3:  # ascender
+            top, bottom = RED, GREEN
+        else:  # descender
             top, bottom = BLUE, YELLOW
 
-        # Step 5: Compute scaling factor
+        # Step 3: Scaling
         target_h = bottom - top
         scale = target_h / h
 
         new_w = max(1, int(w * scale))
         new_h = max(1, int(h * scale))
 
-        # Step 6: Resize glyph
+        # Step 4: Resize
         glyph = cv2.resize(
             glyph,
             (new_w, new_h),
             interpolation=cv2.INTER_NEAREST
         )
 
-        # Step 7: Create blank canvas
+        # Step 5: Canvas
         canvas = np.ones((120, 140), dtype=np.uint8) * 255
 
-        # Step 8: Center horizontally and place vertically
+        # Step 6: Placement
         x_offset = (140 - new_w) // 2
-        y_offset = top
+
+        if "small_j" in filename.lower():
+            y_offset = bottom - new_h
+        else:
+            y_offset = top
 
         canvas[y_offset:y_offset + new_h,
                x_offset:x_offset + new_w] = glyph
