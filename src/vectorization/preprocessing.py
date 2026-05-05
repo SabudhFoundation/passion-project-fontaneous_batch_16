@@ -14,7 +14,25 @@ YELLOW = 620
 
 
 def preprocess_image(img):
-    """Return a clean glyph image with black ink on white background."""
+    """
+    Clean and normalize a glyph image for further processing.
+
+    This function:
+    - Converts image to grayscale (if needed)
+    - Applies Gaussian blur to reduce noise
+    - Uses Otsu thresholding to binarize the image
+    - Ensures black glyph on white background
+    - Applies morphological operations to remove noise and fill gaps
+
+    Args:
+        img (numpy.ndarray): Input image (grayscale or BGR).
+
+    Returns:
+        numpy.ndarray: Clean binary image with black glyph (0) on white background (255).
+
+    Raises:
+        RuntimeError: If preprocessing fails."""
+
     try:
         if img is None:
             raise ValueError("input_image is None")
@@ -47,7 +65,29 @@ def preprocess_image(img):
 
 
 def process_glyph_image(input_image, filename="glyph.png"):
-    """Normalize a glyph image on a fixed canvas for vectorization."""
+    """
+    Normalize a glyph image onto a fixed canvas for vectorization.
+
+    This function:
+    - Cleans the image using preprocessing
+    - Extracts the glyph bounding box
+    - Classifies glyph type (uppercase, lowercase, ascender, descender)
+    - Scales glyph to fit typographic zones
+    - Places glyph correctly on a fixed-size canvas
+
+    Args:
+        input_image (numpy.ndarray): Input glyph image.
+        filename (str, optional): Filename used for glyph classification. Defaults to "glyph.png".
+
+    Returns:
+        numpy.ndarray or None:
+            - Processed glyph image placed on a fixed canvas
+            - None if no glyph content is detected
+
+    Raises:
+        RuntimeError: If processing fails.
+    """
+    
     try:
         if input_image is None:
             raise ValueError("input_image is None")
