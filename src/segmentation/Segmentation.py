@@ -1,3 +1,5 @@
+import os
+import shutil
 import math
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,6 +9,31 @@ import pytesseract
 import torch
 from PIL import Image
 from transformers import ViTImageProcessor, ViTModel
+
+
+def get_tesseract_cmd():
+    """Return the Tesseract command for the current platform."""
+    env_cmd = os.environ.get("TESSERACT_CMD")
+
+    if env_cmd:
+        return env_cmd
+
+    bundled_cmd = os.path.join(
+        "src",
+        "segmentation",
+        "Tesseract-OCR",
+        "tesseract.exe",
+    )
+
+    if os.path.isfile(bundled_cmd):
+        return bundled_cmd
+
+    command_path = shutil.which("tesseract")
+
+    if command_path:
+        return command_path
+
+    return "tesseract"
 
 
 def prepare_input_images(
@@ -741,7 +768,7 @@ def build_character_crops(
 
 
 def process_segmentation(input_image):
-    tesseract_cmd = r"src/segmentation/Tesseract-OCR/tesseract.exe"
+    tesseract_cmd = get_tesseract_cmd()
 
     vit_model_name = "google/vit-base-patch16-224"
     discard_ratio = 0.9

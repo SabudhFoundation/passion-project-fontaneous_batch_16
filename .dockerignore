@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+dataset
+notebooks
+reports
+src/data/raw
+src/data/interim
+src/data/processed
