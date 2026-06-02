@@ -36,7 +36,7 @@ TTF Font Generation (FontForge)
 
 ```
 Python 3.12.3
-````
+```
 
 
 
@@ -52,7 +52,7 @@ sudo apt-get install -y fontforge python3-fontforge
 ### Python dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -r require.txt
 ```
 
 ### Run application
@@ -60,6 +60,25 @@ pip install -r requirements.txt
 ```bash
 streamlit run src/main.py
 ```
+
+
+## Docker Deployment
+###### (Go to dedicated docker directory)
+
+### Build the image:
+
+```bash
+docker build -t fontaneouse .
+```
+
+### Run with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+
+### The application will run in localhost:8501 or < your ip address>:8501"
 
 
 
@@ -71,6 +90,11 @@ streamlit run src/main.py
 ├── reports
 │   └── figures/                       # pipeline visuals (preprocess → segmentation → OCR)
 │
+├── docker/
+|      |──DockerFile/                            # Docker-related scripts
+|      |──docker-compose.yaml
+|      └──setup_linux_venv.sh
+|       
 ├── src
 │   │
 │   ├── preprocessing_data
