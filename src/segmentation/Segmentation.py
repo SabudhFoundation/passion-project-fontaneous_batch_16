@@ -1,4 +1,7 @@
+import os
+import shutil
 import math
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
@@ -8,17 +11,52 @@ from PIL import Image
 from transformers import ViTImageProcessor, ViTModel
 
 
+def get_tesseract_cmd():
+    """Return the Tesseract command for the current platform."""
+    env_cmd = os.environ.get("TESSERACT_CMD")
+
+    if env_cmd:
+        return env_cmd
+
+    bundled_cmd = os.path.join(
+        "src",
+        "segmentation",
+        "Tesseract-OCR",
+        "tesseract.exe",
+    )
+
+    if os.path.isfile(bundled_cmd):
+        return bundled_cmd
+
+    command_path = shutil.which("tesseract")
+
+    if command_path:
+        return command_path
+
+    return "tesseract"
+
+
 def prepare_input_images(
     input_image,
     clahe_clip_limit,
     clahe_tile_grid_size,
     adaptive_block_size,
     adaptive_c,
+    upscale_factor,
 ):
     if input_image is None:
         raise ValueError("input_image is None")
 
     img_bgr = input_image.copy()
+    if upscale_factor > 1.0:
+        img_bgr = cv2.resize(
+            img_bgr,
+            None,
+            fx=upscale_factor,
+            fy=upscale_factor,
+            interpolation=cv2.INTER_CUBIC,
+        )
+
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     gray_image = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
@@ -118,6 +156,38 @@ def calculate_vit_patch_scores(
     return patch_scores, attention_map
 
 
+def detect_line_bands(
+    binary_image,
+    image_height,
+    line_threshold,
+    min_line_height,
+    line_padding,
+):
+    pixel_row = binary_image.mean(axis=1)
+    line_bands = []
+    in_line = False
+    start_y = 0
+
+    for y in range(image_height):
+        if not in_line and pixel_row[y] > line_threshold:
+            in_line = True
+            start_y = y
+        elif in_line and pixel_row[y] <= line_threshold:
+            in_line = False
+            if (y - start_y) >= min_line_height:
+                line_bands.append(
+                    (
+                        max(0, start_y - line_padding),
+                        min(image_height, y + line_padding),
+                    )
+                )
+
+    if in_line and (image_height - start_y) >= min_line_height:
+        line_bands.append((max(0, start_y - line_padding), image_height))
+
+    return line_bands
+
+
 def find_word_ranges_in_line(
     binary_image,
     line_top,
@@ -180,27 +250,13 @@ def detect_lines_and_words(
     min_word_width,
     max_black_ratio,
 ):
-    pixel_row = binary_image.mean(axis=1)
-    line_bands = []
-    in_line = False
-    start_y = 0
-
-    for y in range(image_height):
-        if not in_line and pixel_row[y] > line_threshold:
-            in_line = True
-            start_y = y
-        elif in_line and pixel_row[y] <= line_threshold:
-            in_line = False
-            if (y - start_y) >= min_line_height:
-                line_bands.append(
-                    (
-                        max(0, start_y - line_padding),
-                        min(image_height, y + line_padding),
-                    )
-                )
-
-    if in_line and (image_height - start_y) >= min_line_height:
-        line_bands.append((max(0, start_y - line_padding), image_height))
+    line_bands = detect_line_bands(
+        binary_image,
+        image_height,
+        line_threshold,
+        min_line_height,
+        line_padding,
+    )
 
     all_words = []
     for line_index, (line_top, line_bottom) in enumerate(line_bands):
@@ -234,6 +290,95 @@ def detect_lines_and_words(
             word_counter += 1
 
     return line_bands, all_words
+
+
+def find_character_ranges_in_line(
+    binary_image,
+    line_top,
+    line_bottom,
+    image_width,
+    merge_kernel_size,
+    character_gap_threshold,
+    min_character_width,
+):
+    kernel = np.ones(merge_kernel_size) / merge_kernel_size
+    line_strip = binary_image[line_top:line_bottom, :]
+    column_projection = line_strip.mean(axis=0)
+    smoothed_projection = np.convolve(column_projection, kernel, mode="same")
+    above_threshold = smoothed_projection > character_gap_threshold
+
+    runs = []
+    in_run = False
+    run_start = 0
+
+    for x in range(image_width):
+        if not in_run and above_threshold[x]:
+            in_run = True
+            run_start = x
+        elif in_run and not above_threshold[x]:
+            in_run = False
+            if (x - run_start) >= min_character_width:
+                runs.append((run_start, x))
+
+    if in_run and (image_width - run_start) >= min_character_width:
+        runs.append((run_start, image_width))
+
+    return runs
+
+
+def detect_lines_and_characters(
+    binary_image,
+    image_height,
+    image_width,
+    line_threshold,
+    min_line_height,
+    line_padding,
+    merge_kernel_size,
+    character_gap_threshold,
+    min_character_width,
+    character_padding,
+):
+    line_bands = detect_line_bands(
+        binary_image,
+        image_height,
+        line_threshold,
+        min_line_height,
+        line_padding,
+    )
+
+    line_characters = []
+    for line_index, (line_top, line_bottom) in enumerate(line_bands):
+        char_counter = 0
+        character_ranges = find_character_ranges_in_line(
+            binary_image,
+            line_top,
+            line_bottom,
+            image_width,
+            merge_kernel_size,
+            character_gap_threshold,
+            min_character_width,
+        )
+
+        for char_left, char_right in character_ranges:
+            x0 = max(0, char_left - character_padding)
+            y0 = max(0, line_top - character_padding)
+            x1 = min(image_width, char_right + character_padding)
+            y1 = min(image_height, line_bottom + character_padding)
+
+            line_characters.append(
+                {
+                    "source": "projection",
+                    "line_index": line_index,
+                    "char_index": char_counter,
+                    "x0": x0,
+                    "y0": y0,
+                    "x1": x1,
+                    "y1": y1,
+                }
+            )
+            char_counter += 1
+
+    return line_characters
 
 
 def run_vit_on_word_crops(
@@ -328,6 +473,187 @@ def run_ocr_on_word_crops(
     return word_characters
 
 
+def build_ocr_character_regions(
+    all_words,
+    word_characters,
+    char_padding,
+):
+    character_regions = []
+
+    for line_index, word_index, x0, y0, x1, y1 in all_words:
+        word_key = (line_index, word_index)
+        characters = word_characters.get(word_key, [])
+
+        for char_index, (character, char_x0, char_y0, char_x1, char_y1) in enumerate(characters):
+            region_x0 = max(0, x0 + char_x0 - char_padding)
+            region_y0 = max(0, y0 + char_y0 - char_padding)
+            region_x1 = max(region_x0 + 1, x0 + char_x1 + char_padding)
+            region_y1 = max(region_y0 + 1, y0 + char_y1 + char_padding)
+
+            character_regions.append(
+                {
+                    "source": "ocr",
+                    "character": character,
+                    "line_index": line_index,
+                    "word_index": word_index,
+                    "char_index": char_index,
+                    "x0": region_x0,
+                    "y0": region_y0,
+                    "x1": region_x1,
+                    "y1": region_y1,
+                }
+            )
+
+    return character_regions
+
+
+def run_ocr_segmentation_branch(
+    binary_image,
+    enhanced_image,
+    image_height,
+    image_width,
+    line_threshold,
+    min_line_height,
+    line_padding,
+    word_padding,
+    merge_kernel_size,
+    word_gap_threshold,
+    word_gap_min_width,
+    min_word_width,
+    max_black_ratio,
+    ocr_scale_factor,
+    min_ocr_dim,
+    char_padding,
+):
+    _, all_words = detect_lines_and_words(
+        binary_image,
+        image_height,
+        image_width,
+        line_threshold,
+        min_line_height,
+        line_padding,
+        word_padding,
+        merge_kernel_size,
+        word_gap_threshold,
+        word_gap_min_width,
+        min_word_width,
+        max_black_ratio,
+    )
+
+    word_characters = run_ocr_on_word_crops(
+        all_words,
+        enhanced_image,
+        ocr_scale_factor,
+        min_ocr_dim,
+    )
+
+    return build_ocr_character_regions(
+        all_words,
+        word_characters,
+        char_padding,
+    )
+
+
+def run_projection_segmentation_branch(
+    binary_image,
+    image_height,
+    image_width,
+    line_threshold,
+    min_line_height,
+    line_padding,
+    merge_kernel_size,
+    character_gap_threshold,
+    min_character_width,
+    character_padding,
+):
+    return detect_lines_and_characters(
+        binary_image,
+        image_height,
+        image_width,
+        line_threshold,
+        min_line_height,
+        line_padding,
+        merge_kernel_size,
+        character_gap_threshold,
+        min_character_width,
+        character_padding,
+    )
+
+
+def calculate_character_overlap(first_region, second_region):
+    overlap_left = max(first_region["x0"], second_region["x0"])
+    overlap_top = max(first_region["y0"], second_region["y0"])
+    overlap_right = min(first_region["x1"], second_region["x1"])
+    overlap_bottom = min(first_region["y1"], second_region["y1"])
+
+    overlap_width = max(0, overlap_right - overlap_left)
+    overlap_height = max(0, overlap_bottom - overlap_top)
+    overlap_area = overlap_width * overlap_height
+
+    if overlap_area <= 0:
+        return 0.0
+
+    first_area = max(1, (first_region["x1"] - first_region["x0"]) * (first_region["y1"] - first_region["y0"]))
+    second_area = max(
+        1,
+        (second_region["x1"] - second_region["x0"]) * (second_region["y1"] - second_region["y0"]),
+    )
+    return overlap_area / min(first_area, second_area)
+
+
+def combine_character_regions(
+    ocr_character_regions,
+    projection_character_regions,
+    character_overlap_threshold,
+):
+    combined_regions = [dict(region) for region in ocr_character_regions]
+
+    for projection_region in projection_character_regions:
+        best_index = -1
+        best_overlap = 0.0
+
+        for index, combined_region in enumerate(combined_regions):
+            overlap = calculate_character_overlap(combined_region, projection_region)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_index = index
+
+        if best_index == -1 or best_overlap < character_overlap_threshold:
+            combined_regions.append(dict(projection_region))
+            continue
+
+        combined_regions[best_index]["x0"] = min(
+            combined_regions[best_index]["x0"],
+            projection_region["x0"],
+        )
+        combined_regions[best_index]["y0"] = min(
+            combined_regions[best_index]["y0"],
+            projection_region["y0"],
+        )
+        combined_regions[best_index]["x1"] = max(
+            combined_regions[best_index]["x1"],
+            projection_region["x1"],
+        )
+        combined_regions[best_index]["y1"] = max(
+            combined_regions[best_index]["y1"],
+            projection_region["y1"],
+        )
+
+        if combined_regions[best_index]["source"] != projection_region["source"]:
+            combined_regions[best_index]["source"] = "combined"
+
+    combined_regions.sort(
+        key=lambda region: (
+            region["y0"],
+            region["x0"],
+            region.get("line_index", 0),
+            region.get("word_index", 0),
+            region.get("char_index", 0),
+        )
+    )
+    return combined_regions
+
+
 def calculate_attention_score_for_region(
     word_patch_scores,
     crop_height,
@@ -346,8 +672,8 @@ def calculate_attention_score_for_region(
 
 
 def extract_dominant_character_crop(
-    rgb_word,
-    binary_word,
+    rgb_image,
+    binary_image,
     word_patch_scores,
     char_x0,
     char_y0,
@@ -355,7 +681,7 @@ def extract_dominant_character_crop(
     char_y1,
     min_cc_area,
 ):
-    crop_height, crop_width = rgb_word.shape[:2]
+    crop_height, crop_width = rgb_image.shape[:2]
 
     char_x0 = max(0, char_x0)
     char_y0 = max(0, char_y0)
@@ -365,8 +691,8 @@ def extract_dominant_character_crop(
     if char_x1 <= char_x0 or char_y1 <= char_y0:
         return None
 
-    rgb_crop = rgb_word[char_y0:char_y1, char_x0:char_x1].copy()
-    binary_crop = binary_word[char_y0:char_y1, char_x0:char_x1]
+    rgb_crop = rgb_image[char_y0:char_y1, char_x0:char_x1].copy()
+    binary_crop = binary_image[char_y0:char_y1, char_x0:char_x1]
 
     ink = (binary_crop > 128).astype(np.uint8) * 255
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
@@ -415,57 +741,40 @@ def extract_dominant_character_crop(
 
 
 def build_character_crops(
-    all_words,
-    word_characters,
-    word_attention,
+    character_regions,
     img_rgb,
     binary_image,
-    char_padding,
+    global_patch_scores,
     min_cc_area,
 ):
     character_crops = []
 
-    for line_index, word_index, x0, y0, x1, y1 in all_words:
-        word_key = (line_index, word_index)
-        characters = word_characters.get(word_key, [])
-        attention_data = word_attention.get(word_key)
+    for character_region in character_regions:
+        masked_crop = extract_dominant_character_crop(
+            img_rgb,
+            binary_image,
+            global_patch_scores,
+            character_region["x0"],
+            character_region["y0"],
+            character_region["x1"],
+            character_region["y1"],
+            min_cc_area,
+        )
 
-        if not characters or attention_data is None:
-            continue
-
-        word_patch_scores = attention_data["patch_scores"]
-        rgb_word = img_rgb[y0:y1, x0:x1]
-        binary_word = binary_image[y0:y1, x0:x1]
-
-        for character, char_x0, char_y0, char_x1, char_y1 in characters:
-            expanded_x0 = char_x0 - char_padding
-            expanded_x1 = char_x1 + char_padding
-            expanded_y0 = char_y0 - char_padding
-            expanded_y1 = char_y1 + char_padding
-
-            masked_crop = extract_dominant_character_crop(
-                rgb_word,
-                binary_word,
-                word_patch_scores,
-                expanded_x0,
-                expanded_y0,
-                expanded_x1,
-                expanded_y1,
-                min_cc_area,
-            )
-
-            if masked_crop is not None:
-                character_crops.append(masked_crop)
+        if masked_crop is not None:
+            character_crops.append(masked_crop)
 
     return character_crops
 
 
 def process_segmentation(input_image):
-    tesseract_cmd = r"src/segmentation/Tesseract-OCR/tesseract.exe"
+    tesseract_cmd = get_tesseract_cmd()
 
     vit_model_name = "google/vit-base-patch16-224"
     discard_ratio = 0.9
     head_fusion = "mean"
+
+    upscale_factor = 2.0
 
     clahe_clip_limit = 3.0
     clahe_tile_grid_size = (8, 8)
@@ -482,6 +791,11 @@ def process_segmentation(input_image):
     merge_kernel_size = 5
     word_padding = 18
 
+    character_gap_threshold = 15.0
+    min_character_width = 10
+    character_padding = 3
+    character_overlap_threshold = 0.60
+
     ocr_scale_factor = 6
     min_ocr_dim = 3
     char_padding = 9
@@ -497,56 +811,66 @@ def process_segmentation(input_image):
         clahe_tile_grid_size,
         adaptive_block_size,
         adaptive_c,
+        upscale_factor,
     )
 
     vit_processor, vit_model = load_vit_components(vit_model_name)
 
-    calculate_vit_patch_scores(
-        prepared_images["img_rgb"],
-        vit_processor,
-        vit_model,
-        discard_ratio,
-        head_fusion,
-    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        ocr_future = executor.submit(
+            run_ocr_segmentation_branch,
+            prepared_images["binary_image"],
+            prepared_images["enhanced_image"],
+            prepared_images["image_height"],
+            prepared_images["image_width"],
+            line_threshold,
+            min_line_height,
+            line_padding,
+            word_padding,
+            merge_kernel_size,
+            word_gap_threshold,
+            word_gap_min_width,
+            min_word_width,
+            max_black_ratio,
+            ocr_scale_factor,
+            min_ocr_dim,
+            char_padding,
+        )
+        projection_future = executor.submit(
+            run_projection_segmentation_branch,
+            prepared_images["binary_image"],
+            prepared_images["image_height"],
+            prepared_images["image_width"],
+            line_threshold,
+            min_line_height,
+            line_padding,
+            merge_kernel_size,
+            character_gap_threshold,
+            min_character_width,
+            character_padding,
+        )
+        global_patch_scores, _ = calculate_vit_patch_scores(
+            prepared_images["img_rgb"],
+            vit_processor,
+            vit_model,
+            discard_ratio,
+            head_fusion,
+        )
 
-    _, all_words = detect_lines_and_words(
-        prepared_images["binary_image"],
-        prepared_images["image_height"],
-        prepared_images["image_width"],
-        line_threshold,
-        min_line_height,
-        line_padding,
-        word_padding,
-        merge_kernel_size,
-        word_gap_threshold,
-        word_gap_min_width,
-        min_word_width,
-        max_black_ratio,
-    )
+        ocr_character_regions = ocr_future.result()
+        projection_character_regions = projection_future.result()
 
-    word_attention = run_vit_on_word_crops(
-        all_words,
-        prepared_images["img_rgb"],
-        vit_processor,
-        vit_model,
-        discard_ratio,
-        head_fusion,
-    )
-
-    word_characters = run_ocr_on_word_crops(
-        all_words,
-        prepared_images["enhanced_image"],
-        ocr_scale_factor,
-        min_ocr_dim,
+    combined_character_regions = combine_character_regions(
+        ocr_character_regions,
+        projection_character_regions,
+        character_overlap_threshold,
     )
 
     character_crops = build_character_crops(
-        all_words,
-        word_characters,
-        word_attention,
+        combined_character_regions,
         prepared_images["img_rgb"],
         prepared_images["binary_image"],
-        char_padding,
+        global_patch_scores,
         min_cc_area,
     )
 
@@ -555,6 +879,3 @@ def process_segmentation(input_image):
 
 def process_segemntation(input_image):
     return process_segmentation(input_image)
-    
-
-
