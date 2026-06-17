@@ -547,13 +547,13 @@ def run_global_ocr_branch(
     enhanced_image,
     image_height,
     image_width,
-    ocr_scale_factor,
+    global_ocr_scale_factor,
     min_ocr_dim,
     char_padding,
 ):
     global_characters = read_character_boxes(
         enhanced_image,
-        ocr_scale_factor,
+        global_ocr_scale_factor,
         min_ocr_dim,
         11,
     )
@@ -780,6 +780,7 @@ def process_segmentation(input_image):
     character_overlap_threshold = 0.60
 
     ocr_scale_factor = 6
+    global_ocr_scale_factor = 1
     min_ocr_dim = 3
     char_padding = 9
 
@@ -824,7 +825,7 @@ def process_segmentation(input_image):
             prepared_images["enhanced_image"],
             prepared_images["image_height"],
             prepared_images["image_width"],
-            ocr_scale_factor,
+            global_ocr_scale_factor,
             min_ocr_dim,
             char_padding,
         )
