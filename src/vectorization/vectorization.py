@@ -77,7 +77,6 @@ def vectorize_image(input_path, output_path):
         vtracer.convert_image_to_svg_py(
             input_path,
             output_path,
-<<<<<<< HEAD
             colormode="binary",
             mode="spline",
             filter_speckle=1,
@@ -87,16 +86,6 @@ def vectorize_image(input_path, output_path):
             splice_threshold=20,
             path_precision=4,
         )
-=======
-            colormode='binary',
-            mode='spline',
-            filter_speckle=6,
-            corner_threshold=90,
-            length_threshold=4.0,
-            max_iterations=10,
-            splice_threshold=40
-            )
->>>>>>> 46c7ba66b2c09f31aa3f537b61ff10762cdae14d
     except Exception as e:
         raise RuntimeError(f"VTracer error for {input_path}: {e}")
 
